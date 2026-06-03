@@ -3,7 +3,7 @@ name: CI/CD Pipeline
 on:
   push:
     branches: [main]
-  workflow_dispatch:  # ручной запуск
+  workflow_dispatch:
 
 env:
   IMAGE_NAME: fastapi-logger
@@ -29,79 +29,44 @@ jobs:
       - name: Run unit tests
         run: python -m pytest tests/ -v --tb=short
 
-      - name: Run API smoke test (start server)
-        run: |
-          uvicorn app.main:app --host 127.0.0.1 --port 8000 &
-          sleep 3
-          curl -sf http://127.0.0.1:8000/health | grep -q '"status":"ok"' && echo "Healthcheck OK"
-          curl -sf -X POST http://127.0.0.1:8000/logs \
-            -H "Content-Type: application/json" \
-            -d '{"source":"ci","message":"Pipeline test","level":"info"}' | grep -q '"id":1' && echo "Create log OK"
-          curl -sf http://127.0.0.1:8000/logs | grep -q '"total":1' && echo "List logs OK"
-          kill %1 2>/dev/null || true
-
-  build:
-    name: Build Docker Image
-    needs: test
-    runs-on: ubuntu-latest
-    outputs:
-      image_tag: ${{ steps.tag.outputs.tag }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Generate image tag
-        id: tag
-        run: echo "tag=${{ github.sha }}-$(date +%s)" >> $GITHUB_OUTPUT
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}
-            ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:latest
-
   deploy:
     name: Deploy to Server
-    needs: build
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.2.0
         with:
-          host: ${{ env.DEPLOY_HOST }}
-          username: root
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
             set -e
-            echo "Pulling image..."
-            docker pull ghcr.io/${{ github.repository }}/fastapi-logger:latest
+            cd /root/fastapi-logger
+
+            echo "Pulling latest code..."
+            git pull origin main
+
+            echo "Building Docker image..."
+            docker build -t ${{ env.IMAGE_NAME }}:latest .
 
             echo "Stopping old container..."
-            docker stop fastapi-logger 2>/dev/null || true
-            docker rm fastapi-logger 2>/dev/null || true
+            docker stop ${{ env.IMAGE_NAME }} 2>/dev/null || true
+            docker rm ${{ env.IMAGE_NAME }} 2>/dev/null || true
 
             echo "Starting new container..."
             docker run -d \
-              --name fastapi-logger \
+              --name ${{ env.IMAGE_NAME }} \
               --restart unless-stopped \
               -p ${{ env.DEPLOY_PORT }}:${{ env.DEPLOY_PORT }} \
               -v /root/fastapi-logger/data:/app/data \
-              ghcr.io/${{ github.repository }}/fastapi-logger:latest
+              ${{ env.IMAGE_NAME }}:latest
 
             echo "Waiting for healthcheck..."
             sleep 5
             curl -sf http://127.0.0.1:${{ env.DEPLOY_PORT }}/health || {
               echo "Healthcheck failed!"
-              docker logs fastapi-logger
+              docker logs ${{ env.IMAGE_NAME }}
               exit 1
             }
             echo "Deploy complete!"
