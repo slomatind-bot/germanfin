@@ -11,7 +11,7 @@ from fastapi import FastAPI, status
 from fastapi.responses import JSONResponse
 
 from app.core.database import init_db
-from app.routers import logs
+from app.routers import analysis, logs
 from app.schemas import HealthResponse
 
 
@@ -37,6 +37,7 @@ app = FastAPI(
 
 # --- Роуты ---
 app.include_router(logs.router)
+app.include_router(analysis.router)
 
 
 # --- Healthcheck ---
