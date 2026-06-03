@@ -35,7 +35,7 @@ jobs:
           KEY: ${{ secrets.DEPLOY_SSH_KEY }}
         run: |
           mkdir -p ~/.ssh
-          python3 -c "import os; open(os.path.expanduser('~/.ssh/deploy_key'),'w').write(os.environ['KEY'])"
+          echo "$KEY" | base64 -d > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
       - name: Write SSH config
@@ -56,7 +56,7 @@ jobs:
           IMAGE: ${{ env.IMAGE_NAME }}
           PORT: ${{ env.DEPLOY_PORT }}
         run: |
-          ssh vps << 'CMDS'
+          ssh vps << EOF
             set -e
             echo "=== Connected ==="
             hostname
@@ -83,4 +83,4 @@ jobs:
               exit 1
             }
             echo "Deploy complete!"
-          CMDS
+          EOF
