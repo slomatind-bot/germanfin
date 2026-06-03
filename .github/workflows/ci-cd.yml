@@ -34,6 +34,12 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     steps:
+      - name: Debug secrets
+        run: |
+          echo "Host: ${{ secrets.SERVER_HOST != '' && 'SET' || 'MISSING!' }}"
+          echo "User: ${{ secrets.SERVER_USER != '' && 'SET' || 'MISSING!' }}"
+          echo "SSH Key: ${{ secrets.DEPLOY_SSH_KEY != '' && 'SET' || 'MISSING!' }}"
+
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -42,6 +48,9 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
             set -e
+            echo "=== Connected to server ==="
+            hostname
+            echo "=== Status ==="
             cd /root/fastapi-logger
 
             echo "Pulling latest code..."
