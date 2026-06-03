@@ -5,72 +5,52 @@ on:
     branches: [main]
   workflow_dispatch:
 
-env:
-  IMAGE_NAME: fastapi-logger
-  DEPLOY_PORT: 8000
-
 jobs:
   test:
     name: Test & Lint
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
+
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
+
       - name: Install dependencies
         run: pip install -r requirements.txt
+
       - name: Run unit tests
         run: python -m pytest tests/ -v --tb=short
 
   deploy:
-    name: Deploy to Server
+    name: Deploy
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
-      - name: Setup SSH key and connect
-        env:
-          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t fastapi-logger:latest .
+
+      - name: Deploy container
         run: |
-          mkdir -p ~/.ssh
-          eval "$(ssh-agent -s)"
-          # Add key via ssh-add stdin (not masked by GH since it reads raw stdin)
-          echo "$KEY" | ssh-add -
-          # SSH config
-          cat > ~/.ssh/config << EOF
-          Host vps
-            HostName ${{ secrets.SERVER_HOST }}
-            User ${{ secrets.SERVER_USER }}
-            StrictHostKeyChecking no
-          EOF
-          # Run deploy commands directly here to preserve ssh-agent
-          ssh vps << 'ENDSSH'
-            set -e
-            echo "=== Connected ==="
-            hostname
-            cd /root/fastapi-logger
-            echo "Pulling..."
-            git pull origin main
-            echo "Building..."
-            docker build -t fastapi-logger:latest .
-            echo "Stopping old..."
-            docker stop fastapi-logger 2>/dev/null || true
-            docker rm fastapi-logger 2>/dev/null || true
-            echo "Starting new..."
-            docker run -d \
-              --name fastapi-logger \
-              --restart unless-stopped \
-              -p 8000:8000 \
-              -v /root/fastapi-logger/data:/app/data \
-              fastapi-logger:latest
-            echo "Waiting for healthcheck..."
-            sleep 5
-            curl -sf http://127.0.0.1:8000/health || {
-              echo "Healthcheck failed!"
-              docker logs fastapi-logger
-              exit 1
-            }
-            echo "Deploy complete!"
-          ENDSSH
+          docker stop fastapi-logger 2>/dev/null || true
+          docker rm fastapi-logger 2>/dev/null || true
+          docker run -d \
+            --name fastapi-logger \
+            --restart unless-stopped \
+            -p 8000:8000 \
+            -v /root/fastapi-logger/data:/app/data \
+            fastapi-logger:latest
+
+      - name: Healthcheck
+        run: |
+          sleep 5
+          curl -sf http://127.0.0.1:8000/health || {
+            echo "Healthcheck failed!"
+            docker logs fastapi-logger
+            exit 1
+          }
+          echo "Deploy complete!"
