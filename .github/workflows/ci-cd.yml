@@ -42,7 +42,7 @@ jobs:
           mkdir -p ~/.ssh
           echo "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          cat >> ~/.ssh/config << 'SSHEOF'
+          cat >> ~/.ssh/config << SSHEOF
           Host vps
             HostName ${SSH_HOST}
             User ${SSH_USER}
