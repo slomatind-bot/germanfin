@@ -30,33 +30,23 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     steps:
-      - name: Write SSH key
+      - name: Setup SSH key and connect
         env:
           KEY: ${{ secrets.DEPLOY_SSH_KEY }}
         run: |
           mkdir -p ~/.ssh
-          echo "$KEY" | base64 -d > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-
-      - name: Write SSH config
-        env:
-          HOST: ${{ secrets.SERVER_HOST }}
-          USER: ${{ secrets.SERVER_USER }}
-        run: |
+          eval "$(ssh-agent -s)"
+          # Add key via ssh-add stdin (not masked by GH since it reads raw stdin)
+          echo "$KEY" | ssh-add -
+          # SSH config
           cat > ~/.ssh/config << EOF
           Host vps
-            HostName ${HOST}
-            User ${USER}
-            IdentityFile ~/.ssh/deploy_key
+            HostName ${{ secrets.SERVER_HOST }}
+            User ${{ secrets.SERVER_USER }}
             StrictHostKeyChecking no
           EOF
-
-      - name: Deploy
-        env:
-          IMAGE: ${{ env.IMAGE_NAME }}
-          PORT: ${{ env.DEPLOY_PORT }}
-        run: |
-          ssh vps << EOF
+          # Run deploy commands directly here to preserve ssh-agent
+          ssh vps << 'ENDSSH'
             set -e
             echo "=== Connected ==="
             hostname
@@ -64,23 +54,23 @@ jobs:
             echo "Pulling..."
             git pull origin main
             echo "Building..."
-            docker build -t "$IMAGE":latest .
+            docker build -t fastapi-logger:latest .
             echo "Stopping old..."
-            docker stop "$IMAGE" 2>/dev/null || true
-            docker rm "$IMAGE" 2>/dev/null || true
+            docker stop fastapi-logger 2>/dev/null || true
+            docker rm fastapi-logger 2>/dev/null || true
             echo "Starting new..."
             docker run -d \
-              --name "$IMAGE" \
+              --name fastapi-logger \
               --restart unless-stopped \
-              -p "$PORT":"$PORT" \
+              -p 8000:8000 \
               -v /root/fastapi-logger/data:/app/data \
-              "$IMAGE":latest
+              fastapi-logger:latest
             echo "Waiting for healthcheck..."
             sleep 5
-            curl -sf http://127.0.0.1:"$PORT"/health || {
+            curl -sf http://127.0.0.1:8000/health || {
               echo "Healthcheck failed!"
-              docker logs "$IMAGE"
+              docker logs fastapi-logger
               exit 1
             }
             echo "Deploy complete!"
-          EOF
+          ENDSSH
