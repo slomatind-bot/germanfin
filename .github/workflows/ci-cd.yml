@@ -7,7 +7,6 @@ on:
 
 env:
   IMAGE_NAME: fastapi-logger
-  DEPLOY_HOST: 138.124.97.160
   DEPLOY_PORT: 8000
 
 jobs:
@@ -34,43 +33,40 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     steps:
-      - name: Debug secrets
+      - name: Setup SSH key
         run: |
-          echo "Host: ${{ secrets.SERVER_HOST != '' && 'SET' || 'MISSING!' }}"
-          echo "User: ${{ secrets.SERVER_USER != '' && 'SET' || 'MISSING!' }}"
-          echo "SSH Key: ${{ secrets.DEPLOY_SSH_KEY != '' && 'SET' || 'MISSING!' }}"
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          cat >> ~/.ssh/config << 'SSHEOF'
+          Host vps
+            HostName ${{ secrets.SERVER_HOST }}
+            User ${{ secrets.SERVER_USER }}
+            IdentityFile ~/.ssh/deploy_key
+            StrictHostKeyChecking no
+          SSHEOF
 
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          script: |
+      - name: Deploy
+        run: |
+          ssh vps << 'CMDS'
             set -e
-            echo "=== Connected to server ==="
+            echo "=== Connected ==="
             hostname
-            echo "=== Status ==="
             cd /root/fastapi-logger
-
-            echo "Pulling latest code..."
+            echo "Pulling..."
             git pull origin main
-
-            echo "Building Docker image..."
+            echo "Building..."
             docker build -t ${{ env.IMAGE_NAME }}:latest .
-
-            echo "Stopping old container..."
+            echo "Stopping old..."
             docker stop ${{ env.IMAGE_NAME }} 2>/dev/null || true
             docker rm ${{ env.IMAGE_NAME }} 2>/dev/null || true
-
-            echo "Starting new container..."
+            echo "Starting new..."
             docker run -d \
               --name ${{ env.IMAGE_NAME }} \
               --restart unless-stopped \
               -p ${{ env.DEPLOY_PORT }}:${{ env.DEPLOY_PORT }} \
               -v /root/fastapi-logger/data:/app/data \
               ${{ env.IMAGE_NAME }}:latest
-
             echo "Waiting for healthcheck..."
             sleep 5
             curl -sf http://127.0.0.1:${{ env.DEPLOY_PORT }}/health || {
@@ -79,3 +75,4 @@ jobs:
               exit 1
             }
             echo "Deploy complete!"
+          CMDS
